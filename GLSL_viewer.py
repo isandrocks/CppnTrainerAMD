@@ -30,10 +30,14 @@ def read_shader_file(file_path):
     print(f"Error reading shader file: {e}")
     return None
 
+import os
+
 root = tk.Tk()
 root.withdraw()
 
-file_path = tk.filedialog.askopenfilename(filetypes=[("GLSL files", "*.glsl *.frag *.fs")])
+# Ensure we start looking in the current directory
+initial_dir = os.path.abspath(".")
+file_path = tk.filedialog.askopenfilename(initialdir=initial_dir, filetypes=[("GLSL files", "*.glsl *.frag *.fs")])
 
 fragment_shader = read_shader_file(file_path)
 
@@ -41,6 +45,7 @@ resolution = (800, 600)
 resolution_array = np.array(resolution, dtype=np.float32)
 
 def display():
+  global texture
   # Get Uniform location
   iTime = glGetUniformLocation(shader_program, "iTime")
   iResolution = glGetUniformLocation(shader_program, "iResolution")
@@ -51,16 +56,10 @@ def display():
   mouse_pos = pygame.mouse.get_pos()
   mouse_pos = (mouse_pos[0], resolution[1] - mouse_pos[1])
 
-  # import 2D texture
-  # Load image
-  image = pygame.image.load('./shaders/ComfyUI_00019_.png')
-  image_data = pygame.image.tostring(image, "RGB")
-
-  # Generate texture
-  texture = glGenTextures(1)
-  glActiveTexture(GL_TEXTURE0)
-  glBindTexture(GL_TEXTURE_2D, texture)
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image.get_width(), image.get_height(), 0, GL_RGB, GL_UNSIGNED_BYTE, image_data)
+  # Bind the existing texture instead of loading it every frame (avoids memory leak)
+  if texture is not None:
+      glActiveTexture(GL_TEXTURE0)
+      glBindTexture(GL_TEXTURE_2D, texture)
 
   # draw triangles to fill screen
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -87,7 +86,25 @@ def display():
 
 
 def init():
+  global texture
   glClearColor(0.0, 0.0, 0.0, 1.0)
+  
+  # Load image once and generate texture here to prevent RAM/VRAM leaks
+  try:
+      image = pygame.image.load('./shaders/ComfyUI_00019_.png')
+      image_data = pygame.image.tostring(image, "RGB")
+
+      texture = glGenTextures(1)
+      glActiveTexture(GL_TEXTURE0)
+      glBindTexture(GL_TEXTURE_2D, texture)
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image.get_width(), image.get_height(), 0, GL_RGB, GL_UNSIGNED_BYTE, image_data)
+      
+      # Set texture parameters so it renders correctly
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+  except Exception as e:
+      print(f"Error loading texture in init: {e}")
+      texture = None
 
 def main():
   global shader_program

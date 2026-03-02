@@ -247,8 +247,10 @@ def main():
     if not image_path:
         root = tk.Tk()
         root.withdraw() # Hide the main tk window
+        initial_dir = os.path.abspath(".")
         print("Please select an image in the file dialog...")
         image_path = filedialog.askopenfilename(
+            initialdir=initial_dir,
             title="Select an image to train on",
             filetypes=[
                 ("Image files", "*.jpg *.jpeg *.png *.bmp *.webp *.gif"),
@@ -335,11 +337,22 @@ def main():
                     display_bgr = np.hstack((target_bgr, pred_bgr))
                     display_bgr = cv2.resize(display_bgr, (args.size*4, args.size*2), interpolation=cv2.INTER_NEAREST)
                     
-                    # Add text to the image
+                    # Create a white text panel at the bottom
+                    panel_height = 80
+                    text_panel = np.ones((panel_height, display_bgr.shape[1], 3), dtype=np.uint8) * 255
+                    
+                    # Stack the images and the text panel vertically
+                    display_bgr = np.vstack((display_bgr, text_panel))
+                    
+                    # Add text to the new panel at the bottom
                     font = cv2.FONT_HERSHEY_SIMPLEX
                     status_text = f"Step: {step:05d} | Loss: {loss.item():.4f} | LR: {current_lr:.5f}"
-                    cv2.putText(display_bgr, status_text, (10, 30), font, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-                    cv2.putText(display_bgr, "Press 'Q' to save & exit", (10, 60), font, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+                    
+                    # Base Y position matches the scaled image height
+                    base_y = args.size * 2
+                    
+                    cv2.putText(display_bgr, status_text, (10, base_y + 30), font, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+                    cv2.putText(display_bgr, "Press 'Q' to save & exit", (10, base_y + 60), font, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
                     
                     cv2.imshow("CPPN Trainer", display_bgr)
                     
