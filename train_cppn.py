@@ -208,7 +208,7 @@ float hermiteNoise(vec2 uv) {{
 
 float rand(vec2 c){{return fract(sin(dot(c,vec2(12.9898,78.233)))*43758.5453);}}
 
-const mat3 rgb2yiq=mat3(0.299,0.596,0.211,0.587,-0.274,-0.523,0.114,-0.322,0.312);
+const mat3 rgb2yiq=mat3(0.299,0.587,0.114,0.596,-0.274,-0.322,0.211,-0.523,0.312);
 const mat3 yiq2rgb=mat3(1.0,0.956,0.621,1.0,-0.272,-0.647,1.0,-1.106,1.703);
 
 vec3 hueShiftRGB(vec3 col,float deg){{
@@ -322,7 +322,7 @@ def main():
     parser.add_argument("image", nargs="?", help="Path to target image (optional, will open file dialog if omitted)")
     parser.add_argument("--size", type=int, default=256, help="Training resolution (larger = more GPU work, default: 256)")
     parser.add_argument("--lr", type=float, default=0.002, help="Learning rate (default: 0.002)")
-    parser.add_argument("--display-every", type=int, default=1000, help="Update preview every N steps (higher = faster training, default: 100)")
+    parser.add_argument("--display-every", type=int, default=100, help="Update preview every N steps (higher = faster training, default: 100)")
     parser.add_argument("--input-noise", type=float, default=0, help="Std of Gaussian noise added to inputs each step to prevent stagnation (default: 0.01, set 0 to disable)")
     parser.add_argument("--perturb-scale", type=float, default=0.02, help="Std of weight perturbation applied when LR scheduler reduces LR (default: 0.02, set 0 to disable)")
     args = parser.parse_args()
@@ -398,7 +398,7 @@ def main():
 
     # Apply a dynamic learning rate decay tracking `MSELoss()` flattening effectively
     # patience is in scheduler-step calls, not raw steps; min_lr floors it so it never reaches 0
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=min_lr)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, min_lr=min_lr)
     
     criterion = nn.MSELoss()
     
