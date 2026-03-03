@@ -62,3 +62,13 @@ credentials.json
 /shaders/
 trained_cppn.glsl
 Working_train_cppn.py
+trained_cppn.hlsl
+/webview/
+glsl_to_hlsl.py
+hlsl_test.py
+.gitignore
+test.glsl
+hlsl_viewer.py
+__pycache__/hlsl_viewer.cpython-312.pyc
+.gitignore
+__pycache__/train_cppn.cpython-312.pyc
