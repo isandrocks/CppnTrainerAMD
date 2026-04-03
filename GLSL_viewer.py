@@ -62,19 +62,26 @@ def read_shader_file(file_path):
 
 
 import os
-
-root = tk.Tk()
-root.withdraw()
-
-# Ensure we start looking in the current directory
-initial_dir = os.path.abspath(".")
-file_path = tk.filedialog.askopenfilename(initialdir=initial_dir, filetypes=[("GLSL files", "*.glsl *.frag *.fs")])  # type: ignore
-
-fragment_shader = read_shader_file(file_path)
-
 import json
 import re
 
+# Initialize Tkinter companion window
+root = tk.Tk()
+root.title("GLSL Viewer Controls")
+root.geometry("300x120")
+
+# Instead of withdrawing completely, we keep it visible for the menu.
+initial_dir = os.path.abspath(".")
+file_path = tk.filedialog.askopenfilename(initialdir=initial_dir, filetypes=[("GLSL files", "*.glsl *.frag *.fs")])  # type: ignore
+if not file_path:
+    print("No file selected. Exiting.")
+    exit(0)
+
+fragment_shader = read_shader_file(file_path)
+shader_program = None
+uniform_defaults = {}
+texture = None
+running = True
 
 def get_uniform_defaults(shader_code):
     defaults = {}
@@ -95,6 +102,52 @@ def get_uniform_defaults(shader_code):
 
 
 uniform_defaults = get_uniform_defaults(fragment_shader)
+
+def reload_file(*args):
+    global fragment_shader, shader_program, uniform_defaults
+    if not file_path:
+        return
+    new_shader = read_shader_file(file_path)
+    if new_shader:
+        try:
+            new_program = compileProgram(
+                compileShader(vertex_shader, GL_VERTEX_SHADER),
+                compileShader(new_shader, GL_FRAGMENT_SHADER),
+            )
+            shader_program = new_program
+            fragment_shader = new_shader
+            uniform_defaults = get_uniform_defaults(fragment_shader)
+            print(f"Reloaded {file_path}")
+        except Exception as e:
+            print(f"Error compiling shader: {e}")
+
+def open_file():
+    global file_path
+    new_file = filedialog.askopenfilename(initialdir=initial_dir, filetypes=[("GLSL files", "*.glsl *.frag *.fs")])
+    if new_file:
+        file_path = new_file
+        reload_file()
+
+def quit_app():
+    global running
+    running = False
+
+# Setup Menu Bar
+menu_bar = tk.Menu(root)
+file_menu = tk.Menu(menu_bar, tearoff=0)
+file_menu.add_command(label="Open", command=open_file)
+file_menu.add_command(label="Reload File (F5)", command=reload_file)
+file_menu.add_separator()
+file_menu.add_command(label="Exit", command=quit_app)
+menu_bar.add_cascade(label="File", menu=file_menu)
+root.config(menu=menu_bar)
+
+# Keep the control panel on top
+root.attributes('-topmost', 1)
+
+tk.Label(root, text="GLSL Viewer Controls\nUse File menu or press F5 in viewer to reload.", pady=20).pack()
+
+root.protocol("WM_DELETE_WINDOW", quit_app)
 
 resolution = (960, 540)
 resolution_array = np.array([resolution[0], resolution[1], 1.0], dtype=np.float32)
@@ -196,9 +249,20 @@ def init():
 
 
 def main():
-    global shader_program
+    global shader_program, running
+
+    import os
+    # Set Pygame window to always on top before initialization
+    os.environ['SDL_VIDEO_WINDOW_POS'] = '100,100'
 
     pygame.init()
+    
+    # Enable always-on-top mode for Windows (requires SDL2)
+    import platform
+    if platform.system() == 'Windows':
+        import ctypes
+        from ctypes import wintypes
+    
     pygame.display.set_mode(resolution, pygame.DOUBLEBUF | pygame.OPENGL)
 
     # Compile shaders
@@ -211,14 +275,47 @@ def main():
 
     # Initialize OpenGL
     init()
+    
+    # Apply Windows specific always-on-top using ctypes
+    # Doing it after init() to ensure OpenGL context changes don't reset it
+    import platform
+    if platform.system() == 'Windows':
+        import ctypes
+        from ctypes import wintypes
+        HWND_TOPMOST = -1
+        SWP_NOSIZE = 0x0001
+        SWP_NOMOVE = 0x0002
+        hwnd = pygame.display.get_wm_info()["window"]
+        
+        SetWindowPos = ctypes.windll.user32.SetWindowPos
+        SetWindowPos.restype = wintypes.BOOL
+        SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
 
-    while True:
+    while running:
+        # Pump the Tkinter event loop
+        try:
+            root.update()
+        except tk.TclError:
+            running = False # Tk window closed
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                return
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F5:
+                    reload_file()
+                elif event.key == pygame.K_ESCAPE:
+                    running = False
 
-        display()
+        if running:
+            display()
+            
+    pygame.quit()
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass
 
 
 if __name__ == "__main__":

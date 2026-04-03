@@ -2,7 +2,7 @@ import argparse
 import sys
 import os
 import math
-import tkinter as tk
+import colorsys
 from tkinter import filedialog
 
 try:
@@ -133,36 +133,165 @@ class SobelEdgeLoss(nn.Module):
 
 
 def get_grid_and_target(
-    image_path, size=(128, 128), seeds=(0.3948, 0.36, 0.14), apply_black_to_alpha=False
+    size=(512, 512), seeds=(0.3948, 0.36, 0.14)
 ):
     """
     2. Input Preprocessing: From Grid to Target Image
 
-    Reads a desired target image, creates an explicit X, Y coordinate grid scaled
-    from -1 to 1, and assigns mathematical characteristics like radial distance,
-    zero vectors, and noise initialization states that mimic shader behavior.
+    Creates an explicit X, Y coordinate grid scaled from -1 to 1, and assigns 
+    mathematical characteristics like radial distance, zero vectors, and noise 
+    initialization states that mimic shader behavior. 
+    Generates a procedural dark smooth ripple target.
     """
-    # === Image Loading & Alpha Extraction ===
-    # Load the target image and resize mapping RGBA directly
-    img = Image.open(image_path).convert("RGBA")
-    img = img.resize(size, Image.Resampling.LANCZOS)
-    target = np.array(img, dtype=np.float32) / 255.0
-
-    if apply_black_to_alpha:
-        # Extract the maximum value across the RGB channels for each pixel
-        # This treats pure black as alpha 0.0, pure white as alpha 1.0,
-        # and varying brightnesses as partial transparency.
-        max_rgb = np.max(target[..., :3], axis=-1)
-        # Multiply the brightness by 1.5 to boost overall opacity,
-        boosted_alpha = np.clip(max_rgb * 1.5, 0.0, 1.0)
-        target[..., 3] = boosted_alpha
-
     # === Coordinate Grid Generation ===
     # Creating an evenly spaced coordinate space.
-    # y = np.linspace(-1, 1, size[1]) matches flipped native space in shaders.
+    # Note: GLSL shaders natively map screenspace coordinates from -1 to 1.
+    # The zoom effect is achieved purely through the wave frequency math!
     x = np.linspace(-1, 1, size[0])
     y = np.linspace(-1, 1, size[1])
     xx, yy = np.meshgrid(x, y)
+
+    # === Target Generation (Procedural Silk/Perlin Waves) ===
+    # Use domain warping (offsetting coordinates by smooth waves) to simulate drifting silk sheets
+    
+    # "Zooming in" via frequency bounds mapping (lowering the bounds magnifies the waves)
+    freq_min, freq_max = 1.0, 2.5  # Base frequency range for the warping waves
+
+    # Random Phase Offsets (shifts the starting points of the ripples completely each run)
+    phase_offset_x = np.random.uniform(0.0, np.pi * 2.0, 4)
+    phase_offset_y = np.random.uniform(0.0, np.pi * 2.0, 4)
+
+    # INCREASE THESE VALUES to increase the wave frequency (e.g. uniform(3.0, 6.0, 2))
+    freq_x1, freq_y1 = np.random.uniform(freq_min + 0.1, freq_max, 2)
+    freq_x2, freq_y2 = np.random.uniform(freq_min, freq_max, 2)
+    
+    # Warp the base coordinates using sine/cosine offsets to create organic "Perlin-like" flows
+    warp_u = xx + np.sin(yy * freq_y1 + phase_offset_y[0]) * np.random.uniform(0.5, 1.5)
+    warp_v = yy + np.cos(xx * freq_x1 + phase_offset_x[0]) * np.random.uniform(0.5, 1.5)
+    
+    # Inject organic secondary waves instead of sharp angles to create smooth folds
+    high_freq_x = np.random.uniform(freq_max, freq_max * 2.5, 2)
+    high_freq_y = np.random.uniform(freq_max, freq_max * 2.5, 2)
+    
+    # Smooth undulating distortion
+    secondary_wave_u = np.sin(warp_u * high_freq_x[0] + warp_v * high_freq_y[0] + phase_offset_y[1])
+    secondary_wave_v = np.cos(warp_u * high_freq_x[1] + warp_v * high_freq_y[1] + phase_offset_x[1])
+    
+    warp_u += secondary_wave_u * 0.5
+    warp_v += secondary_wave_v * 0.5
+    
+    # Generate a single sweeping "sheet" phase from the warped coordinates
+    phase = warp_u * freq_x2 + warp_v * freq_y2 + phase_offset_x[2]
+    
+    # Soft fabric folds blending
+    # Use nested sine waves mapped gracefully to 0..1 to serve as a blending factor
+    fold_wave = (np.sin(phase) + 0.5 * np.cos(phase * 1.5 + phase_offset_y[2])) / 1.5
+    
+    # Map [-1, 1] to [0, 1]
+    blend = (fold_wave + 1.0) / 2.0
+    
+    # Apply Steep S-Curve for robust transition (starts slow, ramps up steeply, slows down)
+    # Using a symmetric easing function ensures we get a beautifully balanced mix in the middle
+    s_curve = np.clip(0.5 - 0.5 * np.cos(np.pi * blend), 0.0, 1.0)
+    blend_factor = np.where(s_curve < 0.5, 
+                            4.0 * (s_curve ** 3.0), 
+                            1.0 - 4.0 * ((1.0 - s_curve) ** 3.0))
+    
+    # Create soft lighting mask to simulate shading in the fabric folds
+    lighting = (np.sin(phase * 2.0) + 1.0) / 2.0
+    # Prevent lighting from dipping to absolute zero (which caused the black lines)
+    # Instead, let the 'valleys' darken the mix to roughly 40% brightness, preserving the color
+    lighting = np.clip(lighting * 0.6 + 0.4, 0.0, 1.0)
+    
+    target = np.zeros([size[1], size[0], 4], dtype=np.float32)
+    
+    # Generate analogous colors using HSL mapping
+    # 1. Pick a random base Hue (0.0 to 1.0)
+    base_hue = np.random.uniform(0.0, 1.0)
+    
+    # 2. Add a small offset to get an analogous color
+    analogous_hue = (base_hue + np.random.uniform(0.05, 0.15)) % 1.0 
+    
+    # Keep saturation (S) high to guarantee vibrant colors
+    saturation1 = np.random.uniform(0.8, 1.0)
+    saturation2 = np.random.uniform(0.8, 1.0)
+    
+    # Bias Lightness (L) toward the brighter upper half while still allowing full range
+    # By using `np.sqrt()`, we heavily skew random uniform distribution (0..1) upwards towards 0.7 - 0.9 territory. 
+    lightness1 = np.sqrt(np.random.uniform(0.2, 1.0))
+    lightness2 = np.sqrt(np.random.uniform(0.2, 1.0))
+    
+    # Convert HSL space to RGB arrays to feed directly into the tensor mapped fields
+    c1_rgb = colorsys.hls_to_rgb(base_hue, lightness1, saturation1)
+    c2_rgb = colorsys.hls_to_rgb(analogous_hue, lightness2, saturation2)
+    
+    color1 = np.array(c1_rgb, dtype=np.float32)
+    color2 = np.array(c2_rgb, dtype=np.float32)
+    
+    # Mix the colors based on the steep fold blend factor, and apply the soft lighting
+    # Need to expand color arrays to broadcast against the spatial (H, W) blend factors
+    color1_exp = color1.reshape(1, 1, 3)
+    color2_exp = color2.reshape(1, 1, 3)
+    blend_factor_exp = blend_factor[..., None]
+    lighting_exp = lighting[..., None]
+    
+    final_color = color1_exp * (1.0 - blend_factor_exp) + color2_exp * blend_factor_exp
+    
+    target[..., 0] = final_color[..., 0] * lighting
+    target[..., 1] = final_color[..., 1] * lighting
+    target[..., 2] = final_color[..., 2] * lighting
+    
+    # --- Pearlescent / Iridescent Sheen ---
+    # Simulates thin-film interference (like pearls or soap bubbles) applied over the cloth
+    # We use a cosine palette with varied RGB phase offsets pushed by the fabric's geometry
+    sheen_thickness = phase * 1.5 + blend * 2.0
+    pearl_r = np.cos(sheen_thickness + 0.0)
+    pearl_g = np.cos(sheen_thickness + 2.0)
+    pearl_b = np.cos(sheen_thickness + 4.0)
+    
+    # Map [-1, 1] up to [0, 1] and stack into RGB planes
+    pearl_color = np.stack([pearl_r, pearl_g, pearl_b], axis=-1)
+    pearl_color = (pearl_color + 1.0) / 2.0 
+    
+    # Apply the sheen mostly on the lit surfaces and ridges (where light hits)
+    sheen_mask = lighting[..., None] * 0.35 
+    
+    # Screen/Additive blend to make it shimmer over the base colors
+    target[..., :3] += pearl_color * sheen_mask
+    target[..., :3] = np.clip(target[..., :3], 0.0, 1.0)
+    
+    # --- Vignette / Spotlight Effect ---
+    # Create a spotlight pointing "up" from the bottom center
+    # Calculate distance from a focal point (e.g., center X, bottom Y)
+    spotlight_x = 0.0
+    spotlight_y = -1.35 # Push it slightly below the bottom edge
+    
+    # Distance from spotlight origin mapping to UV space
+    dist = np.sqrt((xx - spotlight_x)**2 + (yy - spotlight_y)**2)
+    
+    # Invert distance so center is 1.0 and edges fade out mapping
+    # Adjust the multiplier to control how fast the light falls off
+    spotlight_intensity = np.clip(1.0 - (dist * 0.45), 0.0, 1.0)
+    
+    # Apply an exponential cliff to make the edge fade heavy/dramatic
+    spotlight_mask = spotlight_intensity ** 2.0
+    
+    # Multiply the entire image by the spotlight mask 
+    target[..., :3] *= spotlight_mask[..., None]
+    
+    # Apply a light pass of noise, subtracting from the generated colors, mimicking the shader's noise step
+    noise_array = np.random.uniform(0.0, 1.0, size=(size[1], size[0]))
+    
+    # INCREASE THIS VALUE to make the noise stronger (e.g. 0.3, 0.5, or 1.0)
+    noise_strength = 0.1 / 15.0 
+    
+    target[..., 0] -= noise_array * noise_strength
+    target[..., 1] -= noise_array * noise_strength
+    target[..., 2] -= noise_array * noise_strength
+
+    # Make sure alpha is fully opaque 1.0 and clip to [0,1]
+    target[..., 3] = 1.0
+    target = np.clip(target, 0.0, 1.0)
 
     # === GLSL Buffer Simulation ===
     # Simulate GLSL input arguments for the first set of inputs (in_buf[6])
@@ -191,7 +320,7 @@ def get_grid_and_target(
     )
 
 
-def export_weights(model, filename="trained_cppn.glsl", seeds=(0.3948, 0.36, 0.14)):
+def export_weights(model, filename="trained_cppn_dark_ripples.glsl", seeds=(0.3948, 0.36, 0.14)):
     """
     3. Model Export: Translating PyTorch Weights to GLSL
 
@@ -462,17 +591,21 @@ def main():
     """
     # === CLI Argument Parsing ===
     parser = argparse.ArgumentParser(
-        description="Train a CPPN to match a picture and export to GLSL"
+        description="Train a CPPN to match a random procedural dark ripple pattern and export to GLSL"
     )
+    # Target image argument removed. Will procedurally generate ripples instead.
+    
     parser.add_argument(
-        "image",
-        nargs="?",
-        help="Path to target image (optional, will open file dialog if omitted)",
+        "--output", 
+        type=str, 
+        default="trained_cppn_dark_ripples.glsl", 
+        help="The filename to save the GLSL shader to"
     )
+    
     parser.add_argument(
         "--size",
         type=int,
-        default=256,
+        default=480,
         help="Training resolution (larger = more GPU work, default: 256)",
     )
     parser.add_argument(
@@ -481,8 +614,8 @@ def main():
     parser.add_argument(
         "--display-every",
         type=int,
-        default=100,
-        help="Update preview every N steps (higher = faster training, default: 100)",
+        default=300,
+        help="Update preview every N steps (higher = faster training, default: 300)",
     )
     parser.add_argument(
         "--input-noise",
@@ -493,7 +626,7 @@ def main():
     parser.add_argument(
         "--perturb-scale",
         type=float,
-        default=0.0,
+        default=0.02,
         help="Std of weight perturbation applied when LR scheduler reduces LR (default: 0.02, set 0 to disable)",
     )
     parser.add_argument(
@@ -502,33 +635,7 @@ def main():
         default=0.3,
         help="Weight for Sobel edge sharpness loss (default: 0.3, higher = sharper, 0 = disable)",
     )
-    parser.add_argument(
-        "--black-to-alpha",
-        action="store_true",
-        help="Set alpha based on RGB brightness (distance from black = alpha).",
-    )
     args = parser.parse_args()
-
-    image_path = args.image
-
-    # === UI Fallback & Image Selection ===
-    # Provide an automated UI fallback using Tkinter if no image path is passed
-    if not image_path:
-        root = tk.Tk()
-        root.withdraw()
-        initial_dir = os.path.abspath(".")
-        print("Please select an image in the file dialog...")
-        image_path = filedialog.askopenfilename(
-            initialdir=initial_dir,
-            title="Select an image to train on",
-            filetypes=[
-                ("Image files", "*.jpg *.jpeg *.png *.bmp *.webp *.gif"),
-                ("All files", "*.*"),
-            ],
-        )
-        if not image_path:
-            print("No image selected. Exiting.")
-            sys.exit(0)
 
     # === Hardware Device & Backend Selection ===
     # Check explicitly for available backends minimizing CPU bottleneck
@@ -542,7 +649,7 @@ def main():
         device = torch.device("cpu")
     print(f"Using device: {device}")
 
-    print(f"Loading image {image_path} at {args.size}x{args.size}...")
+    print(f"Generating procedural random dark smooth ripples target at {args.size}x{args.size}...")
 
     # Randomize noise seeds each run for unique CPPN structure variety
     import random
@@ -557,10 +664,8 @@ def main():
     # === Data Preparation & Grid Generation ===
     # Generate spatial features mapping and correct target format representing the image
     inputs, targets = get_grid_and_target(
-        image_path,
         size=(args.size, args.size),
-        seeds=seeds,
-        apply_black_to_alpha=args.black_to_alpha,
+        seeds=seeds
     )
 
     # Flatten inputs targeting PyTorch linear model batch configurations mapping
@@ -614,26 +719,8 @@ def main():
     current_lr = args.lr
     display_every = args.display_every
 
-    # Handles dynamic mapping updates applying OpenCV tracks dynamically targeting optimizer features
-    def on_lr_change(val):
-        global current_lr
-        val = max(0, min(100, val))  # Clamp to prevent out-of-bounds
-        val_f = float(val) / 100.0
-        # Prevent division by zero mathematically mapping logs
-        ui_min_lr = max(1e-5, min_lr)
-        current_lr = ui_min_lr * (max_lr / ui_min_lr) ** val_f
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = current_lr
-
-    # Calculate starting mapping UI offset mapping Logarithmic scales effectively
-    ui_min_lr = max(1e-5, min_lr)
-    init_lr = max(ui_min_lr, min(max_lr, args.lr))
-    init_val = int(
-        round(100.0 * math.log(init_lr / ui_min_lr) / math.log(max_lr / ui_min_lr))
-    )
-
     # At >=512 the window would be huge (2048px wide); halve it to keep it manageable
-    display_scale = 2 if args.size >= 512 else 4
+    display_scale = 2 if args.size >= 400 else 4
 
     # === Core Continuous Training Loop ===
     step = 0
@@ -645,7 +732,7 @@ def main():
 
             # Input jitter: applied every 1001 steps randomly shifting noise mapping explicitly targeting input coordinates.
             # Used to automatically pull training state away from mapping local minimas stalling rendering effectiveness.
-            if args.input_noise > 0 and step % 1001 == 0:
+            if args.input_noise > 0 and step % 107 == 0:
                 noisy_inputs = (
                     inputs_flat + torch.randn_like(inputs_flat) * args.input_noise
                 )
@@ -666,13 +753,9 @@ def main():
             # === UI Rendering & Real-time Visualization ===
             # Reconstruct image periodically for UI preview
             if step % display_every == 0:
-                # Show window first so the trackbar has a valid parent window instance
+                # Show window first
                 if step == 0:
-                    # Initial empty setup so that setTrackbarPos doesn't throw a NULL window error
                     cv2.namedWindow("CPPN Trainer")
-                    cv2.createTrackbar(
-                        "Log10(LR)", "CPPN Trainer", init_val, 100, on_lr_change
-                    )
 
                 # Update the scheduler every display_every steps with the current loss
                 # (but only after the first 5000 steps allowing model to form basic structure mapping first)
@@ -702,21 +785,6 @@ def main():
                 # Stop updating UI if window was closed explicitly mapping system shutdown commands
                 if cv2.getWindowProperty("CPPN Trainer", cv2.WND_PROP_VISIBLE) < 1:
                     print("\n\nTraining stopped by user (Window closed).")
-                    break
-
-                # Update the trackbar position to reflect the new learning rate correctly applying UI limitations mapping Log
-                clamped_lr = max(ui_min_lr, min(max_lr, current_lr))
-                new_val = int(
-                    round(
-                        100.0
-                        * math.log(clamped_lr / ui_min_lr)
-                        / math.log(max_lr / ui_min_lr)
-                    )
-                )
-                new_val = max(0, min(100, new_val))  # Clamp to prevent GUI errors
-                try:
-                    cv2.setTrackbarPos("Log10(LR)", "CPPN Trainer", new_val)
-                except cv2.error:
                     break
 
                 # Render predicted mapping explicitly displaying real image and generated matrix output
@@ -800,6 +868,7 @@ def main():
 
                     cv2.imshow("CPPN Trainer", display_bgr)
 
+
                     # Stop if 'q' is pressed or Window is closed natively saving outputs executing correct GLSL export processes
                     key = cv2.waitKey(1)
                     if key & 0xFF == ord("q"):
@@ -813,7 +882,7 @@ def main():
     cv2.destroyAllWindows()
 
     # Save the output weights generated during tracking dynamically mapped training loop natively
-    export_weights(model, "trained_cppn.glsl", seeds=seeds)
+    export_weights(model, args.output, seeds=seeds)
 
 
 if __name__ == "__main__":

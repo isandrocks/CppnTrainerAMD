@@ -72,3 +72,7 @@ hlsl_viewer.py
 __pycache__/hlsl_viewer.cpython-312.pyc
 .gitignore
 __pycache__/train_cppn.cpython-312.pyc
+/notes/
+trained_cppn_dark_ripples.glsl
+/SHADERed/
+.github/copilot-instructions.md
