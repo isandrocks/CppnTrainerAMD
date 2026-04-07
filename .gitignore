@@ -76,3 +76,7 @@ __pycache__/train_cppn.cpython-312.pyc
 trained_cppn_dark_ripples.glsl
 /SHADERed/
 .github/copilot-instructions.md
+trained_cppn_16.glsl
+trained_cppn_32.glsl
+__pycache__/train_cppn_32.cpython-312.pyc
+GEMINI.md

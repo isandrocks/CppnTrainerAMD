@@ -26,48 +26,83 @@ except ImportError:
 
 
 class GLSL_CPPN(nn.Module):
+    """
+    1. PyTorch replica of the GLSL Architecture (16 hidden layers)
+    """
     def __init__(self):
         super().__init__()
-        # Hidden Layer 1 & 2
+        # --- Level 1 ---
         self.l_buf0 = nn.Linear(8, 4)
         self.l_buf1 = nn.Linear(8, 4)
         self.l_buf2 = nn.Linear(8, 4)
         self.l_buf3 = nn.Linear(8, 4)
 
-        # Deep Layer 1
+        # --- Level 2 ---
         self.l_buf4 = nn.Linear(16, 4)
         self.l_buf5 = nn.Linear(16, 4)
+        self.l_buf6 = nn.Linear(16, 4)
+        self.l_buf7 = nn.Linear(16, 4)
 
-        # Deep Layer 2
-        self.l_buf6 = nn.Linear(24, 4)
-        self.l_buf7 = nn.Linear(24, 4)
+        # --- Level 3 ---
+        self.l_buf8 = nn.Linear(32, 4)
+        self.l_buf9 = nn.Linear(32, 4)
+        self.l_buf10 = nn.Linear(32, 4)
+        self.l_buf11 = nn.Linear(32, 4)
 
-        # Output Layer
-        self.l_out = nn.Linear(32, 4)
+        # --- Level 4 ---
+        self.l_buf12 = nn.Linear(48, 4)
+        self.l_buf13 = nn.Linear(48, 4)
+        self.l_buf14 = nn.Linear(48, 4)
+        self.l_buf15 = nn.Linear(48, 4)
+
+        # --- Output Layer ---
+        self.l_out = nn.Linear(64, 4)
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, mean=0.0, std=2.0)
-                nn.init.normal_(m.bias, mean=0.0, std=1.0)
+                std = 0.5 / math.sqrt(m.in_features) 
+                nn.init.normal_(m.weight, mean=0.0, std=std)
+                nn.init.zeros_(m.bias)
 
     def forward(self, input_features):
-        buf6_7 = input_features
+        buf16_17 = input_features
 
-        buf0 = torch.sigmoid(self.l_buf0(buf6_7))
-        buf1 = torch.sigmoid(self.l_buf1(buf6_7))
-        buf2 = torch.sigmoid(self.l_buf2(buf6_7))
-        buf3 = torch.sigmoid(self.l_buf3(buf6_7))
+        # WARNING: If you change the activation function here (e.g. from torch.sigmoid),
+        # you MUST also update the corresponding GLSL code in the 'export_weights' string!
+        # Level 1
+        buf0 = torch.sigmoid(self.l_buf0(buf16_17))
+        buf1 = torch.sigmoid(self.l_buf1(buf16_17))
+        buf2 = torch.sigmoid(self.l_buf2(buf16_17))
+        buf3 = torch.sigmoid(self.l_buf3(buf16_17))
+
         buf0_3 = torch.cat([buf0, buf1, buf2, buf3], dim=-1)
 
+        # Level 2
         buf4 = torch.sigmoid(self.l_buf4(buf0_3))
         buf5 = torch.sigmoid(self.l_buf5(buf0_3))
-        buf0_5 = torch.cat([buf0_3, buf4, buf5], dim=-1)
+        buf6 = torch.sigmoid(self.l_buf6(buf0_3))
+        buf7 = torch.sigmoid(self.l_buf7(buf0_3))
 
-        buf6 = torch.sigmoid(self.l_buf6(buf0_5))
-        buf7 = torch.sigmoid(self.l_buf7(buf0_5))
-        buf0_7 = torch.cat([buf0_5, buf6, buf7], dim=-1)
+        buf0_7 = torch.cat([buf0_3, buf4, buf5, buf6, buf7], dim=-1)
 
-        out = torch.sigmoid(self.l_out(buf0_7))
+        # Level 3
+        buf8 = torch.sigmoid(self.l_buf8(buf0_7))
+        buf9 = torch.sigmoid(self.l_buf9(buf0_7))
+        buf10 = torch.sigmoid(self.l_buf10(buf0_7))
+        buf11 = torch.sigmoid(self.l_buf11(buf0_7))
+
+        buf0_11 = torch.cat([buf0_7, buf8, buf9, buf10, buf11], dim=-1)
+
+        # Level 4
+        buf12 = torch.sigmoid(self.l_buf12(buf0_11))
+        buf13 = torch.sigmoid(self.l_buf13(buf0_11))
+        buf14 = torch.sigmoid(self.l_buf14(buf0_11))
+        buf15 = torch.sigmoid(self.l_buf15(buf0_11))
+
+        buf0_15 = torch.cat([buf0_11, buf12, buf13, buf14, buf15], dim=-1)
+
+        # Output
+        out = torch.sigmoid(self.l_out(buf0_15))
         return out
 
 
@@ -130,7 +165,7 @@ def get_grid_and_target(
     )
 
 
-def export_weights(model, filename="trained_cppn.glsl", seeds=(0.3948, 0.36, 0.14)):
+def export_weights(model, filename="trained_cppn_16.glsl", seeds=(0.3948, 0.36, 0.14)):
     def format_vec4(vec):
         return f"vec4({vec[0]:.6f},{vec[1]:.6f},{vec[2]:.6f},{vec[3]:.6f})"
 
@@ -144,7 +179,10 @@ def export_weights(model, filename="trained_cppn.glsl", seeds=(0.3948, 0.36, 0.1
     kwargs = {"seed0": seeds[0], "seed1": seeds[1], "seed2": seeds[2]}
     layers = [
         model.l_buf0, model.l_buf1, model.l_buf2, model.l_buf3,
-        model.l_buf4, model.l_buf5, model.l_buf6, model.l_buf7, model.l_out
+        model.l_buf4, model.l_buf5, model.l_buf6, model.l_buf7,
+        model.l_buf8, model.l_buf9, model.l_buf10, model.l_buf11,
+        model.l_buf12, model.l_buf13, model.l_buf14, model.l_buf15,
+        model.l_out
     ]
 
     for i, layer in enumerate(layers, start=1):
@@ -205,21 +243,17 @@ float hash(vec2 p) {{
     return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }}
 
-// 2D Value Noise using Hermite interpolation
 float hermiteNoise(vec2 uv) {{
-    vec2 i = floor(uv);  // Integer grid coordinates
-    vec2 f = fract(uv);  // Fractional coordinates
+    vec2 i = floor(uv);
+    vec2 f = fract(uv);
 
-    // Cubic Hermite interpolation polynomial: 3f^2 - 2f^3
     vec2 u = f * f * (3.0 - 2.0 * f);
 
-    // Get random values for the 4 corners of the grid cell
     float a = hash(i + vec2(0.0, 0.0));
     float b = hash(i + vec2(1.0, 0.0));
     float c = hash(i + vec2(0.0, 1.0));
     float d = hash(i + vec2(1.0, 1.0));
 
-    // Bilinearly interpolate between the corners using the Hermite curve
     return mix(mix(a, b, u.x), 
                mix(c, d, u.x), u.y);
 }}
@@ -244,54 +278,76 @@ vec4 sigmoid(vec4 x){{return 1./(1.+exp(-x));}}
 
 vec4 cppn_fn(vec2 coordinate, float in0, float in1, float in2) {{
     // --- INPUT LAYER ---
-    vec4 in_buf[8];
-    in_buf[6] = vec4(coordinate.x, coordinate.y, {seed0:.6f} + in0, {seed1:.6f} + in1);
-    in_buf[7] = vec4({seed2:.6f} + in2, sqrt(coordinate.x * coordinate.x + coordinate.y * coordinate.y), 0., 0.);
+    vec4 in_buf[18];
+    in_buf[16] = vec4(coordinate.x, coordinate.y, {seed0:.6f} + in0, {seed1:.6f} + in1);
+    in_buf[17] = vec4({seed2:.6f} + in2, sqrt(coordinate.x * coordinate.x + coordinate.y * coordinate.y), 0., 0.);
     
     // --- WEIGHTS & BIASES ---
-    // Hidden Layer 1
+    // Level 1
     mat4 w1_1 = {w1_1}; mat4 w1_2 = {w1_2}; vec4 b1 = {b1};
     mat4 w2_1 = {w2_1}; mat4 w2_2 = {w2_2}; vec4 b2 = {b2};
-
-    // Hidden Layer 2
     mat4 w3_1 = {w3_1}; mat4 w3_2 = {w3_2}; vec4 b3 = {b3};
     mat4 w4_1 = {w4_1}; mat4 w4_2 = {w4_2}; vec4 b4 = {b4};
 
-    // Deep Layer 1
+    // Level 2
     mat4 w5_1 = {w5_1}; mat4 w5_2 = {w5_2}; mat4 w5_3 = {w5_3}; mat4 w5_4 = {w5_4}; vec4 b5 = {b5};
     mat4 w6_1 = {w6_1}; mat4 w6_2 = {w6_2}; mat4 w6_3 = {w6_3}; mat4 w6_4 = {w6_4}; vec4 b6 = {b6};
+    mat4 w7_1 = {w7_1}; mat4 w7_2 = {w7_2}; mat4 w7_3 = {w7_3}; mat4 w7_4 = {w7_4}; vec4 b7 = {b7};
+    mat4 w8_1 = {w8_1}; mat4 w8_2 = {w8_2}; mat4 w8_3 = {w8_3}; mat4 w8_4 = {w8_4}; vec4 b8 = {b8};
 
-    // Deep Layer 2
-    mat4 w7_1 = {w7_1}; mat4 w7_2 = {w7_2}; mat4 w7_3 = {w7_3}; mat4 w7_4 = {w7_4}; mat4 w7_5 = {w7_5}; mat4 w7_6 = {w7_6}; vec4 b7 = {b7};
-    mat4 w8_1 = {w8_1}; mat4 w8_2 = {w8_2}; mat4 w8_3 = {w8_3}; mat4 w8_4 = {w8_4}; mat4 w8_5 = {w8_5}; mat4 w8_6 = {w8_6}; vec4 b8 = {b8};
+    // Level 3
+    mat4 w9_1 = {w9_1}; mat4 w9_2 = {w9_2}; mat4 w9_3 = {w9_3}; mat4 w9_4 = {w9_4}; mat4 w9_5 = {w9_5}; mat4 w9_6 = {w9_6}; mat4 w9_7 = {w9_7}; mat4 w9_8 = {w9_8}; vec4 b9 = {b9};
+    mat4 w10_1 = {w10_1}; mat4 w10_2 = {w10_2}; mat4 w10_3 = {w10_3}; mat4 w10_4 = {w10_4}; mat4 w10_5 = {w10_5}; mat4 w10_6 = {w10_6}; mat4 w10_7 = {w10_7}; mat4 w10_8 = {w10_8}; vec4 b10 = {b10};
+    mat4 w11_1 = {w11_1}; mat4 w11_2 = {w11_2}; mat4 w11_3 = {w11_3}; mat4 w11_4 = {w11_4}; mat4 w11_5 = {w11_5}; mat4 w11_6 = {w11_6}; mat4 w11_7 = {w11_7}; mat4 w11_8 = {w11_8}; vec4 b11 = {b11};
+    mat4 w12_1 = {w12_1}; mat4 w12_2 = {w12_2}; mat4 w12_3 = {w12_3}; mat4 w12_4 = {w12_4}; mat4 w12_5 = {w12_5}; mat4 w12_6 = {w12_6}; mat4 w12_7 = {w12_7}; mat4 w12_8 = {w12_8}; vec4 b12 = {b12};
+
+    // Level 4
+    mat4 w13_1 = {w13_1}; mat4 w13_2 = {w13_2}; mat4 w13_3 = {w13_3}; mat4 w13_4 = {w13_4}; mat4 w13_5 = {w13_5}; mat4 w13_6 = {w13_6}; mat4 w13_7 = {w13_7}; mat4 w13_8 = {w13_8}; mat4 w13_9 = {w13_9}; mat4 w13_10 = {w13_10}; mat4 w13_11 = {w13_11}; mat4 w13_12 = {w13_12}; vec4 b13 = {b13};
+    mat4 w14_1 = {w14_1}; mat4 w14_2 = {w14_2}; mat4 w14_3 = {w14_3}; mat4 w14_4 = {w14_4}; mat4 w14_5 = {w14_5}; mat4 w14_6 = {w14_6}; mat4 w14_7 = {w14_7}; mat4 w14_8 = {w14_8}; mat4 w14_9 = {w14_9}; mat4 w14_10 = {w14_10}; mat4 w14_11 = {w14_11}; mat4 w14_12 = {w14_12}; vec4 b14 = {b14};
+    mat4 w15_1 = {w15_1}; mat4 w15_2 = {w15_2}; mat4 w15_3 = {w15_3}; mat4 w15_4 = {w15_4}; mat4 w15_5 = {w15_5}; mat4 w15_6 = {w15_6}; mat4 w15_7 = {w15_7}; mat4 w15_8 = {w15_8}; mat4 w15_9 = {w15_9}; mat4 w15_10 = {w15_10}; mat4 w15_11 = {w15_11}; mat4 w15_12 = {w15_12}; vec4 b15 = {b15};
+    mat4 w16_1 = {w16_1}; mat4 w16_2 = {w16_2}; mat4 w16_3 = {w16_3}; mat4 w16_4 = {w16_4}; mat4 w16_5 = {w16_5}; mat4 w16_6 = {w16_6}; mat4 w16_7 = {w16_7}; mat4 w16_8 = {w16_8}; mat4 w16_9 = {w16_9}; mat4 w16_10 = {w16_10}; mat4 w16_11 = {w16_11}; mat4 w16_12 = {w16_12}; vec4 b16 = {b16};
 
     // Output Layer
-    mat4 w9_1 = {w9_1}; mat4 w9_2 = {w9_2}; mat4 w9_3 = {w9_3}; mat4 w9_4 = {w9_4}; mat4 w9_5 = {w9_5}; mat4 w9_6 = {w9_6}; mat4 w9_7 = {w9_7}; mat4 w9_8 = {w9_8}; vec4 b9 = {b9};
+    mat4 w17_1 = {w17_1}; mat4 w17_2 = {w17_2}; mat4 w17_3 = {w17_3}; mat4 w17_4 = {w17_4}; mat4 w17_5 = {w17_5}; mat4 w17_6 = {w17_6}; mat4 w17_7 = {w17_7}; mat4 w17_8 = {w17_8}; mat4 w17_9 = {w17_9}; mat4 w17_10 = {w17_10}; mat4 w17_11 = {w17_11}; mat4 w17_12 = {w17_12}; mat4 w17_13 = {w17_13}; mat4 w17_14 = {w17_14}; mat4 w17_15 = {w17_15}; mat4 w17_16 = {w17_16}; vec4 b17 = {b17};
 
     // --- APPLYING NEURAL NETWORK ---
-    // Hidden Layer 1 calculation
- 
-    in_buf[0] = mmul(w1_1, in_buf[6]) + mmul(w1_2, in_buf[7]) + b1;
-    in_buf[1] = mmul(w2_1, in_buf[6]) + mmul(w2_2, in_buf[7]) + b2;
-    in_buf[0] = sigmoid(in_buf[0]); in_buf[1] = sigmoid(in_buf[1]);
+    // WARNING: If you changed the activation function in the PyTorch 'forward' method,
+    // you MUST also update the mathematical equivalents below!
     
-    // Hidden Layer 2 calculation
-    in_buf[2] = mmul(w3_1, in_buf[6]) + mmul(w3_2, in_buf[7]) + b3;
-    in_buf[3] = mmul(w4_1, in_buf[6]) + mmul(w4_2, in_buf[7]) + b4;
+    // Level 1 calculation
+    in_buf[0] = mmul(w1_1, in_buf[16]) + mmul(w1_2, in_buf[17]) + b1;
+    in_buf[1] = mmul(w2_1, in_buf[16]) + mmul(w2_2, in_buf[17]) + b2;
+    in_buf[2] = mmul(w3_1, in_buf[16]) + mmul(w3_2, in_buf[17]) + b3;
+    in_buf[3] = mmul(w4_1, in_buf[16]) + mmul(w4_2, in_buf[17]) + b4;
+    in_buf[0] = sigmoid(in_buf[0]); in_buf[1] = sigmoid(in_buf[1]);
     in_buf[2] = sigmoid(in_buf[2]); in_buf[3] = sigmoid(in_buf[3]);
 
-    // Deep Layer 1 calculation
+    // Level 2 calculation
     in_buf[4] = mmul(w5_1, in_buf[0]) + mmul(w5_2, in_buf[1]) + mmul(w5_3, in_buf[2]) + mmul(w5_4, in_buf[3]) + b5;
     in_buf[5] = mmul(w6_1, in_buf[0]) + mmul(w6_2, in_buf[1]) + mmul(w6_3, in_buf[2]) + mmul(w6_4, in_buf[3]) + b6;
+    in_buf[6] = mmul(w7_1, in_buf[0]) + mmul(w7_2, in_buf[1]) + mmul(w7_3, in_buf[2]) + mmul(w7_4, in_buf[3]) + b7;
+    in_buf[7] = mmul(w8_1, in_buf[0]) + mmul(w8_2, in_buf[1]) + mmul(w8_3, in_buf[2]) + mmul(w8_4, in_buf[3]) + b8;
     in_buf[4] = sigmoid(in_buf[4]); in_buf[5] = sigmoid(in_buf[5]);
-    
-    // Deep Layer 2 calculation
-    in_buf[6] = mmul(w7_1, in_buf[0]) + mmul(w7_2, in_buf[1]) + mmul(w7_3, in_buf[2]) + mmul(w7_4, in_buf[3]) + mmul(w7_5, in_buf[4]) + mmul(w7_6, in_buf[5]) + b7;
-    in_buf[7] = mmul(w8_1, in_buf[0]) + mmul(w8_2, in_buf[1]) + mmul(w8_3, in_buf[2]) + mmul(w8_4, in_buf[3]) + mmul(w8_5, in_buf[4]) + mmul(w8_6, in_buf[5]) + b8;
     in_buf[6] = sigmoid(in_buf[6]); in_buf[7] = sigmoid(in_buf[7]);
     
+    // Level 3 calculation
+    in_buf[8]  = mmul(w9_1, in_buf[0]) + mmul(w9_2, in_buf[1]) + mmul(w9_3, in_buf[2]) + mmul(w9_4, in_buf[3]) + mmul(w9_5, in_buf[4]) + mmul(w9_6, in_buf[5]) + mmul(w9_7, in_buf[6]) + mmul(w9_8, in_buf[7]) + b9;
+    in_buf[9]  = mmul(w10_1, in_buf[0]) + mmul(w10_2, in_buf[1]) + mmul(w10_3, in_buf[2]) + mmul(w10_4, in_buf[3]) + mmul(w10_5, in_buf[4]) + mmul(w10_6, in_buf[5]) + mmul(w10_7, in_buf[6]) + mmul(w10_8, in_buf[7]) + b10;
+    in_buf[10] = mmul(w11_1, in_buf[0]) + mmul(w11_2, in_buf[1]) + mmul(w11_3, in_buf[2]) + mmul(w11_4, in_buf[3]) + mmul(w11_5, in_buf[4]) + mmul(w11_6, in_buf[5]) + mmul(w11_7, in_buf[6]) + mmul(w11_8, in_buf[7]) + b11;
+    in_buf[11] = mmul(w12_1, in_buf[0]) + mmul(w12_2, in_buf[1]) + mmul(w12_3, in_buf[2]) + mmul(w12_4, in_buf[3]) + mmul(w12_5, in_buf[4]) + mmul(w12_6, in_buf[5]) + mmul(w12_7, in_buf[6]) + mmul(w12_8, in_buf[7]) + b12;
+    in_buf[8] = sigmoid(in_buf[8]); in_buf[9]  = sigmoid(in_buf[9]);
+    in_buf[10] = sigmoid(in_buf[10]); in_buf[11] = sigmoid(in_buf[11]);
+
+    // Level 4 calculation
+    in_buf[12] = mmul(w13_1, in_buf[0]) + mmul(w13_2, in_buf[1]) + mmul(w13_3, in_buf[2]) + mmul(w13_4, in_buf[3]) + mmul(w13_5, in_buf[4]) + mmul(w13_6, in_buf[5]) + mmul(w13_7, in_buf[6]) + mmul(w13_8, in_buf[7]) + mmul(w13_9, in_buf[8]) + mmul(w13_10, in_buf[9]) + mmul(w13_11, in_buf[10]) + mmul(w13_12, in_buf[11]) + b13;
+    in_buf[13] = mmul(w14_1, in_buf[0]) + mmul(w14_2, in_buf[1]) + mmul(w14_3, in_buf[2]) + mmul(w14_4, in_buf[3]) + mmul(w14_5, in_buf[4]) + mmul(w14_6, in_buf[5]) + mmul(w14_7, in_buf[6]) + mmul(w14_8, in_buf[7]) + mmul(w14_9, in_buf[8]) + mmul(w14_10, in_buf[9]) + mmul(w14_11, in_buf[10]) + mmul(w14_12, in_buf[11]) + b14;
+    in_buf[14] = mmul(w15_1, in_buf[0]) + mmul(w15_2, in_buf[1]) + mmul(w15_3, in_buf[2]) + mmul(w15_4, in_buf[3]) + mmul(w15_5, in_buf[4]) + mmul(w15_6, in_buf[5]) + mmul(w15_7, in_buf[6]) + mmul(w15_8, in_buf[7]) + mmul(w15_9, in_buf[8]) + mmul(w15_10, in_buf[9]) + mmul(w15_11, in_buf[10]) + mmul(w15_12, in_buf[11]) + b15;
+    in_buf[15] = mmul(w16_1, in_buf[0]) + mmul(w16_2, in_buf[1]) + mmul(w16_3, in_buf[2]) + mmul(w16_4, in_buf[3]) + mmul(w16_5, in_buf[4]) + mmul(w16_6, in_buf[5]) + mmul(w16_7, in_buf[6]) + mmul(w16_8, in_buf[7]) + mmul(w16_9, in_buf[8]) + mmul(w16_10, in_buf[9]) + mmul(w16_11, in_buf[10]) + mmul(w16_12, in_buf[11]) + b16;
+    in_buf[12] = sigmoid(in_buf[12]); in_buf[13] = sigmoid(in_buf[13]);
+    in_buf[14] = sigmoid(in_buf[14]); in_buf[15] = sigmoid(in_buf[15]);
+
     // Output Layer calculation
-    in_buf[0] = mmul(w9_1, in_buf[0]) + mmul(w9_2, in_buf[1]) + mmul(w9_3, in_buf[2]) + mmul(w9_4, in_buf[3]) + mmul(w9_5, in_buf[4]) + mmul(w9_6, in_buf[5]) + mmul(w9_7, in_buf[6]) + mmul(w9_8, in_buf[7]) + b9;
+    in_buf[0] = mmul(w17_1, in_buf[0]) + mmul(w17_2, in_buf[1]) + mmul(w17_3, in_buf[2]) + mmul(w17_4, in_buf[3]) + mmul(w17_5, in_buf[4]) + mmul(w17_6, in_buf[5]) + mmul(w17_7, in_buf[6]) + mmul(w17_8, in_buf[7]) + mmul(w17_9, in_buf[8]) + mmul(w17_10, in_buf[9]) + mmul(w17_11, in_buf[10]) + mmul(w17_12, in_buf[11]) + mmul(w17_13, in_buf[12]) + mmul(w17_14, in_buf[13]) + mmul(w17_15, in_buf[14]) + mmul(w17_16, in_buf[15]) + b17;
     in_buf[0] = sigmoid(in_buf[0]);
     
     return vec4(in_buf[0].x, in_buf[0].y, in_buf[0].z, in_buf[0].w);
@@ -333,14 +389,49 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train a CPPN to match a picture and export to GLSL"
     )
-    parser.add_argument("image", nargs="?", help="Path to target image")
-    parser.add_argument("--size", type=int, default=256, help="Training resolution")
-    parser.add_argument("--lr", type=float, default=0.002, help="Learning rate")
-    parser.add_argument("--display-every", type=int, default=100, help="Update preview every N steps")
-    parser.add_argument("--input-noise", type=float, default=0.0, help="Std of Gaussian noise added to inputs")
-    parser.add_argument("--perturb-scale", type=float, default=0.0, help="Std of weight perturbation on LR drop")
-    parser.add_argument("--edge-weight", type=float, default=0.3, help="Weight for Sobel edge sharpness loss")
-    parser.add_argument("--black-to-alpha", action="store_true", help="Set alpha based on RGB brightness")
+    parser.add_argument(
+        "image",
+        nargs="?",
+        help="Path to target image (optional, will open file dialog if omitted)",
+    )
+    parser.add_argument(
+        "--size",
+        type=int,
+        default=256,
+        help="Training resolution (larger = more GPU work, default: 256)",
+    )
+    parser.add_argument(
+        "--lr", type=float, default=0.002, help="Learning rate (default: 0.002)"
+    )
+    parser.add_argument(
+        "--display-every",
+        type=int,
+        default=100,
+        help="Update preview every N steps (higher = faster training, default: 100)",
+    )
+    parser.add_argument(
+        "--input-noise",
+        type=float,
+        default=0.0,
+        help="Std of Gaussian noise added to inputs each step to prevent stagnation (default: 0.01, set 0 to disable)",
+    )
+    parser.add_argument(
+        "--perturb-scale",
+        type=float,
+        default=0.0,
+        help="Std of weight perturbation applied when LR scheduler reduces LR (default: 0.02, set 0 to disable)",
+    )
+    parser.add_argument(
+        "--edge-weight",
+        type=float,
+        default=0,
+        help="Weight for Sobel edge sharpness loss (default: 0.3, higher = sharper, 0 = disable)",
+    )
+    parser.add_argument(
+        "--black-to-alpha",
+        action="store_true",
+        help="Set alpha based on RGB brightness (distance from black = alpha).",
+    )
     args = parser.parse_args()
 
     image_path = args.image
@@ -373,6 +464,7 @@ def main():
     print(f"Loading image {image_path} at {args.size}x{args.size}...")
 
     import random
+
     seeds = (
         round(random.uniform(0.01, 0.99), 4),
         round(random.uniform(0.01, 0.99), 4),
@@ -404,7 +496,7 @@ def main():
             model = torch.compile(model)
             print("torch.compile enabled")
         except Exception:
-            pass
+            pass 
 
     if HAS_DIRECTML and is_dml:
         optimizer = optim.RMSprop(model.parameters(), lr=args.lr, momentum=0.9)  # type: ignore
@@ -549,7 +641,7 @@ def main():
 
     cv2.destroyAllWindows()
 
-    export_weights(model, "trained_cppn.glsl", seeds=seeds)
+    export_weights(model, "trained_cppn_16.glsl", seeds=seeds)
 
 
 if __name__ == "__main__":
